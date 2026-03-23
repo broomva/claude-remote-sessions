@@ -122,8 +122,6 @@ with open('$SESSIONS_MD', 'w') as f: f.write('\n'.join(lines))
 _is_alive() { tmux has-session -t "$(_session_name "$1")" 2>/dev/null; }
 
 _resolve_workdir() {
-  # Resolve a channel/thread name to a workdir via workdir-map.json.
-  # Falls back to the global WORKDIR if the map file is missing or the name is not found.
   local name="$1"
   if [[ -z "$name" || ! -f "$WORKDIR_MAP" ]]; then
     echo "$WORKDIR"
@@ -148,6 +146,31 @@ except Exception:
   else
     echo "$WORKDIR"
   fi
+
+# UUID v5 namespace for discord-sessions (fixed, generated once)
+_UUID_NAMESPACE="a1b2c3d4-e5f6-4789-abcd-ef0123456789"
+
+_generate_session_id() {
+  local channel_id="$1"
+  python3 -c "
+import uuid
+ns = uuid.UUID('$_UUID_NAMESPACE')
+print(uuid.uuid5(ns, '$channel_id'))
+"
+}
+
+_persist_session_id() {
+  local id="$1" session_uuid="$2"
+  local dir
+  dir="$(_state_dir "$id")"
+  printf '%s' "$session_uuid" > "$dir/.session-id"
+}
+
+_read_session_id() {
+  local id="$1"
+  local f
+  f="$(_state_dir "$id")/.session-id"
+  [[ -f "$f" ]] && cat "$f" || echo ""
 }
 
 _read_bot_token() {
@@ -171,14 +194,26 @@ for m in reversed(msgs):
 }
 
 _spawn_tmux() {
-  local id="$1" name="$2" system_prompt="${3:-}" workdir="${4:-$WORKDIR}"
+  local id="$1" name="$2" system_prompt="${3:-}" workdir="${4:-$WORKDIR}" session_uuid="${5:-}"
   local session_name state_dir claude_cmd
   session_name="$(_session_name "$id")"
   state_dir="$(_state_dir "$id")"
 
+  # Generate a deterministic session ID if none provided
+  if [[ -z "$session_uuid" ]]; then
+    session_uuid="$(_read_session_id "$id")"
+  fi
+  if [[ -z "$session_uuid" ]]; then
+    session_uuid="$(_generate_session_id "$id")"
+  fi
+
+  # Persist the session ID so respawns can resume the conversation
+  _persist_session_id "$id" "$session_uuid"
+
   claude_cmd="DISCORD_STATE_DIR='$state_dir' claude"
   claude_cmd+=" --channels plugin:discord@claude-plugins-official"
   claude_cmd+=" --dangerously-skip-permissions"
+  claude_cmd+=" --session-id '${session_uuid}'"
   claude_cmd+=" --name '${name}'"
 
   if [[ -n "$system_prompt" ]]; then
@@ -196,16 +231,17 @@ _spawn_tmux() {
 # ── Commands ─────────────────────────────────────────────────────────────
 
 cmd_spawn() {
-  local channel_id="" label="" system_prompt="" workdir=""
+  local channel_id="" label="" system_prompt="" workdir="" fresh=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --name)          label="$2"; shift 2 ;;
       --system-prompt) system_prompt="$2"; shift 2 ;;
       --workdir)       workdir="$2"; shift 2 ;;
+      --fresh)         fresh=true; shift ;;
       *)               channel_id="$1"; shift ;;
     esac
   done
-  [[ -n "$channel_id" ]] || { echo "Usage: spawn <channel_id> [--name <label>] [--workdir <path>]"; exit 1; }
+  [[ -n "$channel_id" ]] || { echo "Usage: spawn <channel_id> [--name <label>] [--workdir <path>] [--fresh]"; exit 1; }
 
   _require_main_config
   _require_config
@@ -218,7 +254,15 @@ cmd_spawn() {
 
   local name="${label:-ch-${channel_id: -6}}"
   _ensure_state_dir "$channel_id"
-  _spawn_tmux "$channel_id" "$name" "$system_prompt" "$workdir"
+
+  # --fresh: generate a new UUID to start a clean conversation
+  local session_uuid=""
+  if $fresh; then
+    session_uuid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+    echo "FRESH  new session-id=$session_uuid"
+  fi
+
+  _spawn_tmux "$channel_id" "$name" "$system_prompt" "$workdir" "$session_uuid"
   _registry_set "$channel_id" "channel" "$name"
 
   echo "SPAWNED  $(_session_name "$channel_id")  name=$name  workdir=${workdir:-$WORKDIR}"
@@ -269,7 +313,8 @@ cfg['groups']['$parent_id'] = {'requireMention': False, 'allowFrom': []}
 with open(p, 'w') as f: json.dump(cfg, f, indent=2)
 "
 
-  _spawn_tmux "$thread_id" "$name" "$prompt" "$workdir"
+  # Thread sessions also get deterministic session IDs for resume on respawn
+  _spawn_tmux "$thread_id" "$name" "$prompt" "$workdir" ""
   _registry_set "$thread_id" "thread" "$name" "$parent_id"
 
   echo "SPAWNED  $(_session_name "$thread_id")  name=$name  parent=$parent_id  workdir=${workdir:-$WORKDIR}"
@@ -331,13 +376,18 @@ for cid, info in reg.items():
       _ensure_state_dir "$cid"
       local wd=""
       [[ -f "$(_state_dir "$cid")/.workdir" ]] && wd="$(cat "$(_state_dir "$cid")/.workdir")"
+
+      # Read the persisted session ID so the respawned session resumes the conversation
+      local session_uuid=""
+      session_uuid="$(_read_session_id "$cid")"
+
       if [[ "$type" == "thread" && "$parent" != "-" ]]; then
         local pf="$(_state_dir "$cid")/.system-prompt"
         local sp=""
         [[ -f "$pf" ]] && sp="$(cat "$pf")"
-        _spawn_tmux "$cid" "$name" "$sp" "$wd"
+        _spawn_tmux "$cid" "$name" "$sp" "$wd" "$session_uuid"
       else
-        _spawn_tmux "$cid" "$name" "" "$wd"
+        _spawn_tmux "$cid" "$name" "" "$wd" "$session_uuid"
       fi
     fi
   done
@@ -543,7 +593,7 @@ case "${1:-help}" in
 Discord Session Manager — per-channel Claude Code sessions via tmux
 
   init                Setup — configure user ID, guild ID, workdir
-  spawn <channel_id> [--name <label>] [--workdir <path>] [--system-prompt <text>]
+  spawn <channel_id> [--name <label>] [--workdir <path>] [--system-prompt <text>] [--fresh]
   spawn-thread <thread_id> <parent_channel_id> [--limit <n>] [--name <label>] [--workdir <path>]
   discover            Auto-detect guild channels and spawn sessions
   discover-threads    Auto-detect active threads and spawn sessions
@@ -561,6 +611,10 @@ Channel-to-workdir mapping:
   to project directories. discover and discover-threads will use the mapped
   workdir when spawning new sessions. Example:
     { "general": "$HOME/myproject", "health-os": "$HOME/apps/healthOS" }
+
+Flags:
+  --fresh             (spawn only) Start a fresh conversation — generates a new
+                      session ID instead of resuming the previous one
 HELP
     ;;
   *) echo "Unknown: $1 (try --help)"; exit 1 ;;
