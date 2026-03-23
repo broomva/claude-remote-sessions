@@ -25,6 +25,7 @@ _load_config
 
 ALLOWED_USER_ID="${DISCORD_ALLOWED_USER_ID:-}"
 GUILD_ID="${DISCORD_GUILD_ID:-}"
+WORKDIR_MAP="$SESSIONS_DIR/workdir-map.json"
 WORKDIR="${DISCORD_SESSION_WORKDIR:-$HOME}"
 
 _require_config() {
@@ -577,8 +578,32 @@ print(f'\nDiscovered {len(threads)} active threads, spawned {new_count} new sess
 "
 }
 
+_update_workdir_map() {
+  # Add or update a channel name → workdir entry in workdir-map.json
+  local name="$1" workdir="$2"
+  [[ -z "$name" || -z "$workdir" ]] && return 0
+  python3 -c "
+import json, os
+path = '$WORKDIR_MAP'
+try:
+    with open(path) as f: m = json.load(f)
+except Exception:
+    m = {}
+m['$name'] = '$workdir'
+with open(path, 'w') as f: json.dump(m, f, indent=2)
+" 2>/dev/null || true
+}
+
 cmd_create_channel() {
-  local name="${1:?Usage: create-channel <name>}"
+  local name="" workdir=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --workdir) workdir="$2"; shift 2 ;;
+      *)         name="$1"; shift ;;
+    esac
+  done
+  [[ -n "$name" ]] || { echo "Usage: create-channel <name> [--workdir <path>]"; exit 1; }
+
   _require_main_config
   _require_config
   local token
@@ -596,8 +621,17 @@ cmd_create_channel() {
   channel_id="${result%% *}"
   channel_name="${result#* }"
 
-  echo "CREATED  #$channel_name ($channel_id)"
-  cmd_spawn "$channel_id" --name "$channel_name"
+  # Update workdir map if workdir specified
+  if [[ -n "$workdir" ]]; then
+    _update_workdir_map "$channel_name" "$workdir"
+    echo "CREATED  #$channel_name ($channel_id)  workdir=$workdir"
+    cmd_spawn "$channel_id" --name "$channel_name" --workdir "$workdir"
+  else
+    local resolved
+    resolved="$(_resolve_workdir "$channel_name")"
+    echo "CREATED  #$channel_name ($channel_id)  workdir=$resolved"
+    cmd_spawn "$channel_id" --name "$channel_name" --workdir "$resolved"
+  fi
 }
 
 _count_active_sessions() {
