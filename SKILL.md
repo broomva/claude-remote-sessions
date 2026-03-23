@@ -1,22 +1,24 @@
 ---
-name: discord-sessions
+name: claude-remote-sessions
 description: >
-  Per-channel Discord sessions for Claude Code — each Discord channel or thread gets its
-  own isolated Claude Code session via tmux, with per-channel access control, project-specific
-  workdirs, and automatic CLAUDE.md chain loading. Includes a session manager (spawn, kill,
-  discover, create-channel, cleanup-stale), a watchdog daemon (auto-respawn every 30s,
-  auto-discover new channels/threads every 60s, stale cleanup every 5m), thread context
-  injection from parent channels, and launchd boot persistence. Use when: (1) setting up
-  per-channel Discord sessions for Claude Code, (2) managing multiple Claude Code sessions
-  across Discord channels, (3) auto-discovering new Discord channels or threads,
-  (4) spawning thread sessions with parent conversation context, (5) keeping Discord agent
-  sessions alive with a watchdog, (6) cleaning up stale sessions for deleted/archived
-  channels, (7) user says "discord sessions", "per-channel discord", "discord watchdog",
-  "spawn discord session", "discord channel session", "discord thread session",
-  "cleanup stale sessions".
+  Per-channel remote sessions for Claude Code via Discord and Telegram — each channel,
+  thread, or chat gets its own isolated Claude Code session via tmux, with per-channel
+  access control, project-specific workdirs, and automatic CLAUDE.md chain loading.
+  Includes session managers for Discord (spawn, kill, discover, create-channel, cleanup-stale)
+  and Telegram (spawn, kill, respawn), watchdog daemons (auto-respawn every 30s, auto-discover
+  new channels/threads every 60s, stale cleanup every 5m), thread context injection from
+  parent channels, session resume via deterministic UUIDs, workdir mapping, bot status
+  channel topic updates, and launchd boot persistence. Use when: (1) setting up per-channel
+  Discord or Telegram sessions for Claude Code, (2) managing multiple Claude Code sessions
+  across messaging channels, (3) auto-discovering new Discord channels or threads,
+  (4) spawning thread sessions with parent conversation context, (5) keeping remote agent
+  sessions alive with a watchdog, (6) cleaning up stale sessions, (7) setting up Telegram
+  per-chat sessions, (8) user says "remote sessions", "discord sessions", "telegram sessions",
+  "per-channel discord", "discord watchdog", "telegram watchdog", "spawn discord session",
+  "spawn telegram session", "claude remote", "channel session", "thread session".
 ---
 
-# Discord Sessions
+# Claude Remote Sessions
 
 Each Discord channel or thread maps to its own independent Claude Code session running
 in a tmux pane. Discord messaging is handled natively by the MCP plugin inside each
