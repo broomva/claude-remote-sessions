@@ -81,6 +81,9 @@ Script: `scripts/discord-session-manager.sh`
 
 # Thread session (fetches last 20 parent messages as context)
 ./scripts/discord-session-manager.sh spawn-thread <thread_id> <parent_id> [--name <label>] [--workdir <path>]
+
+# Fresh session — resets conversation history for a channel
+./scripts/discord-session-manager.sh spawn <channel_id> --name <label> --fresh
 ```
 
 Default workdir comes from `config.env`. Override per-session with `--workdir` to scope
@@ -88,7 +91,10 @@ a session to a specific project — it loads that project's CLAUDE.md chain auto
 
 Each session gets:
 - A tmux session `dc-<id>` running Claude Code with `--channels discord`
+- A deterministic `--session-id` (UUID v5 derived from the channel ID) so conversation
+  history persists across watchdog respawns
 - A per-channel `DISCORD_STATE_DIR` with scoped `access.json`
+- A persisted `.session-id` file in the state directory
 - A registry entry in `sessions.json`
 
 ### Auto-Discovery
@@ -136,6 +142,29 @@ Every 30s: respawns dead sessions. Every 60s: discovers new channels and threads
 
 See [references/launchd.md](references/launchd.md) for a launchd plist template
 that starts the watchdog on login.
+
+## Session Persistence
+
+Sessions survive watchdog respawns by using Claude Code's `--session-id` flag. When a
+session is spawned, a deterministic UUID v5 is generated from a fixed namespace and the
+channel/thread ID. This means:
+
+- **Same channel = same session ID** — the conversation resumes where it left off after
+  a crash or respawn.
+- The UUID is persisted to `$SESSIONS_DIR/<channel_id>/.session-id` so `respawn-dead`
+  reads it back and passes it to the new claude process.
+- Use `--fresh` when spawning to generate a random UUID v4 instead, resetting the
+  conversation history for that channel.
+
+### How it works
+
+1. `spawn` / `spawn-thread` calls `_generate_session_id(channel_id)` which produces a
+   deterministic UUID v5 via `python3 -c "uuid.uuid5(namespace, channel_id)"`.
+2. The UUID is saved to `<state_dir>/.session-id` and passed as `--session-id <uuid>` to
+   the claude command.
+3. When the watchdog calls `respawn-dead`, the persisted UUID is read from `.session-id`
+   and passed back to `_spawn_tmux`, so claude resumes the same conversation.
+4. `--fresh` overrides this with a new random UUID v4, giving the channel a clean slate.
 
 ## Thread Detection (In-Session)
 
