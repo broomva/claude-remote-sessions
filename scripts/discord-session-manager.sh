@@ -315,7 +315,15 @@ cfg['groups']['$parent_id'] = {'requireMention': False, 'allowFrom': []}
 with open(p, 'w') as f: json.dump(cfg, f, indent=2)
 "
 
-  # Thread sessions also get deterministic session IDs for resume on respawn
+  # Inherit workdir from parent channel session if not explicitly set
+  if [[ -z "$workdir" ]]; then
+    local parent_wd_file
+    parent_wd_file="$(_state_dir "$parent_id")/.workdir"
+    if [[ -f "$parent_wd_file" ]]; then
+      workdir="$(cat "$parent_wd_file")"
+    fi
+  fi
+
   _spawn_tmux "$thread_id" "$name" "$prompt" "$workdir" ""
   _registry_set "$thread_id" "thread" "$name" "$parent_id"
 
