@@ -4,14 +4,16 @@ description: >
   Per-channel Discord sessions for Claude Code — each Discord channel or thread gets its
   own isolated Claude Code session via tmux, with per-channel access control, project-specific
   workdirs, and automatic CLAUDE.md chain loading. Includes a session manager (spawn, kill,
-  discover, create-channel), a watchdog daemon (auto-respawn every 30s, auto-discover new
-  channels/threads every 60s), thread context injection from parent channels, and launchd
-  boot persistence. Use when: (1) setting up per-channel Discord sessions for Claude Code,
-  (2) managing multiple Claude Code sessions across Discord channels, (3) auto-discovering
-  new Discord channels or threads, (4) spawning thread sessions with parent conversation
-  context, (5) keeping Discord agent sessions alive with a watchdog, (6) user says
-  "discord sessions", "per-channel discord", "discord watchdog", "spawn discord session",
-  "discord channel session", "discord thread session".
+  discover, create-channel, cleanup-stale), a watchdog daemon (auto-respawn every 30s,
+  auto-discover new channels/threads every 60s, stale cleanup every 5m), thread context
+  injection from parent channels, and launchd boot persistence. Use when: (1) setting up
+  per-channel Discord sessions for Claude Code, (2) managing multiple Claude Code sessions
+  across Discord channels, (3) auto-discovering new Discord channels or threads,
+  (4) spawning thread sessions with parent conversation context, (5) keeping Discord agent
+  sessions alive with a watchdog, (6) cleaning up stale sessions for deleted/archived
+  channels, (7) user says "discord sessions", "per-channel discord", "discord watchdog",
+  "spawn discord session", "discord channel session", "discord thread session",
+  "cleanup stale sessions".
 ---
 
 # Discord Sessions
@@ -43,6 +45,7 @@ DISCORD_GUILD_ID="your-guild-server-id"
 DISCORD_SESSION_WORKDIR="$HOME"          # Default workdir for new sessions
 DISCORD_WATCHDOG_INTERVAL=30             # Respawn check frequency (seconds)
 DISCORD_DISCOVER_INTERVAL=60             # Channel/thread discovery frequency (seconds)
+DISCORD_CLEANUP_INTERVAL=300             # Stale session cleanup frequency (seconds)
 ```
 
 Find your user ID: Discord Settings → Advanced → Enable Developer Mode → right-click your name → Copy User ID.
@@ -116,6 +119,17 @@ Discord → a session spawns automatically.
 
 Creates the Discord channel via API AND spawns its session.
 
+### Stale Session Cleanup
+
+```bash
+./scripts/discord-session-manager.sh cleanup-stale
+```
+
+Checks each registered session against the Discord API. Kills and deregisters sessions
+whose channel has been deleted (HTTP 404) or whose thread has been archived
+(`thread_metadata.archived: true`). The watchdog runs this automatically every 5 minutes
+(configurable via `DISCORD_CLEANUP_INTERVAL`).
+
 ### Manage
 
 ```bash
@@ -137,6 +151,7 @@ Script: `scripts/discord-watchdog.sh`
 ```
 
 Every 30s: respawns dead sessions. Every 60s: discovers new channels and threads.
+Every 5m: cleans up stale sessions (deleted channels, archived threads).
 
 ### Boot Persistence (macOS)
 
@@ -215,5 +230,5 @@ they are killed and re-spawned.
 Discord #general   →  tmux: dc-<a>  →  Claude Code (workdir A, CLAUDE.md chain A)
 Discord #project-x →  tmux: dc-<b>  →  Claude Code (workdir B, CLAUDE.md chain B)
 Thread: "design"   →  tmux: dc-<c>  →  Claude Code (parent context injected)
-                      dc-watchdog    →  Respawns dead + discovers new every 60s
+                      dc-watchdog    →  Respawns dead + discovers new + cleans stale
 ```

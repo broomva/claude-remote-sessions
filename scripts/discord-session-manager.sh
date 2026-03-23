@@ -393,6 +393,74 @@ for cid, info in reg.items():
   done
 }
 
+cmd_cleanup_stale() {
+  _require_main_config
+  _ensure_dirs
+  local token
+  token="$(_read_bot_token)"
+
+  local cleaned=0 checked=0
+
+  # Build list of registered channel IDs first, then check each
+  local ids
+  ids=$(python3 -c "
+import json
+with open('$SESSIONS_REGISTRY') as f: reg = json.load(f)
+for cid, info in reg.items():
+    print(f'{cid} {info[\"type\"]} {info[\"name\"]}')
+")
+
+  if [[ -z "$ids" ]]; then
+    echo "No registered sessions to check."
+    return 0
+  fi
+
+  while IFS=' ' read -r cid type name; do
+    checked=$((checked + 1))
+    local response http_code body
+    response=$(curl -sS -w "\n%{http_code}" -H "Authorization: Bot $token" \
+      "https://discord.com/api/v10/channels/${cid}" 2>/dev/null) || true
+    http_code=$(echo "$response" | tail -1)
+    body=$(echo "$response" | sed '$d')
+
+    local stale=false reason=""
+    if [[ "$http_code" == "404" ]]; then
+      stale=true
+      reason="channel deleted (404)"
+    elif echo "$body" | python3 -c "
+import json, sys
+try:
+    ch = json.load(sys.stdin)
+    md = ch.get('thread_metadata', {})
+    if md.get('archived', False):
+        sys.exit(0)
+    sys.exit(1)
+except:
+    sys.exit(1)
+" 2>/dev/null; then
+      stale=true
+      reason="thread archived"
+    fi
+
+    if [[ "$stale" == "true" ]]; then
+      echo "  STALE   ${name} (${cid}) — ${reason}"
+      local sn
+      sn="$(_session_name "$cid")"
+      if _is_alive "$cid"; then
+        tmux kill-session -t "$sn" 2>/dev/null || true
+        echo "          killed tmux session $sn"
+      fi
+      _registry_remove "$cid"
+      cleaned=$((cleaned + 1))
+    else
+      echo "  OK      ${name} (${cid})"
+    fi
+  done <<< "$ids"
+
+  echo ""
+  echo "Checked $checked sessions, cleaned $cleaned stale"
+}
+
 cmd_discover() {
   _require_main_config
   _require_config
@@ -580,6 +648,7 @@ case "${1:-help}" in
   discover)          cmd_discover ;;
   discover-threads)  cmd_discover_threads ;;
   discover-all)      cmd_discover; echo ""; cmd_discover_threads ;;
+  cleanup-stale)     cmd_cleanup_stale ;;
   create-channel)    shift; cmd_create_channel "$@" ;;
   init)              cmd_init ;;
   list)              cmd_list ;;
@@ -598,6 +667,7 @@ Discord Session Manager — per-channel Claude Code sessions via tmux
   discover            Auto-detect guild channels and spawn sessions
   discover-threads    Auto-detect active threads and spawn sessions
   discover-all        Both channels + threads
+  cleanup-stale       Kill sessions for deleted channels or archived threads
   create-channel <name>  Create a Discord channel + spawn its session
   list                List sessions with UP/DOWN status
   attach <id>         Attach to a tmux session

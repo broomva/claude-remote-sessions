@@ -14,6 +14,7 @@ CONFIG_FILE="$SESSIONS_DIR/config.env"
 
 INTERVAL="${DISCORD_WATCHDOG_INTERVAL:-30}"
 DISCOVER_INTERVAL="${DISCORD_DISCOVER_INTERVAL:-60}"
+CLEANUP_INTERVAL="${DISCORD_CLEANUP_INTERVAL:-300}"
 MANAGER="$(cd "$(dirname "$0")" && pwd)/discord-session-manager.sh"
 TMUX_SESSION="dc-watchdog"
 PIDFILE="$SESSIONS_DIR/watchdog.pid"
@@ -21,12 +22,13 @@ PIDFILE="$SESSIONS_DIR/watchdog.pid"
 _log() { echo "[$(date +%H:%M:%S)] $*"; }
 
 cmd_run() {
-  _log "Watchdog started (interval=${INTERVAL}s, discover=${DISCOVER_INTERVAL}s, pid=$$)"
+  _log "Watchdog started (interval=${INTERVAL}s, discover=${DISCOVER_INTERVAL}s, cleanup=${CLEANUP_INTERVAL}s, pid=$$)"
   mkdir -p "$SESSIONS_DIR"
   echo $$ > "$PIDFILE"
   trap 'rm -f "$PIDFILE"; _log "Watchdog stopped"; exit 0' INT TERM
 
   local last_discover=0
+  local last_cleanup=0
 
   while true; do
     local now
@@ -44,6 +46,14 @@ cmd_run() {
         [[ -n "$line" ]] && _log "$line"
       done
       last_discover=$now
+    fi
+
+    if (( now - last_cleanup >= CLEANUP_INTERVAL )); then
+      _log "Running stale session cleanup..."
+      "$MANAGER" cleanup-stale 2>&1 | while read -r line; do
+        [[ -n "$line" ]] && _log "$line"
+      done
+      last_cleanup=$now
     fi
 
     sleep "$INTERVAL"
