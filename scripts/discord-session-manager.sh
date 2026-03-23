@@ -25,6 +25,7 @@ _load_config
 ALLOWED_USER_ID="${DISCORD_ALLOWED_USER_ID:-}"
 GUILD_ID="${DISCORD_GUILD_ID:-}"
 WORKDIR="${DISCORD_SESSION_WORKDIR:-$HOME}"
+STATUS_CHANNEL_ID="${DISCORD_STATUS_CHANNEL_ID:-}"
 
 _require_config() {
   if [[ -z "$ALLOWED_USER_ID" ]]; then
@@ -450,6 +451,71 @@ EOF
   echo "Next: ./scripts/discord-session-manager.sh discover-all"
 }
 
+# ── Status ────────────────────────────────────────────────────────────────
+
+_count_active_sessions() {
+  _ensure_dirs
+  python3 -c "
+import json, subprocess
+with open('$SESSIONS_REGISTRY') as f: reg = json.load(f)
+up = 0
+for cid, info in reg.items():
+    if subprocess.run(['tmux', 'has-session', '-t', info['tmux']], capture_output=True).returncode == 0:
+        up += 1
+print(up)
+"
+}
+
+cmd_motd() {
+  local up total watchdog_status
+  _ensure_dirs
+  read up total <<< "$(python3 -c "
+import json, subprocess
+with open('$SESSIONS_REGISTRY') as f: reg = json.load(f)
+up = sum(1 for info in reg.values()
+         if subprocess.run(['tmux', 'has-session', '-t', info['tmux']], capture_output=True).returncode == 0)
+print(up, len(reg))
+")"
+  if tmux has-session -t "dc-watchdog" 2>/dev/null; then
+    watchdog_status="running"
+  else
+    watchdog_status="stopped"
+  fi
+  echo "${up}/${total} sessions active | watchdog: ${watchdog_status} | $(date +%Y-%m-%dT%H:%M:%S)"
+}
+
+cmd_set_channel_topic() {
+  local topic="${1:-}"
+  if [[ -z "$STATUS_CHANNEL_ID" ]]; then
+    # Silently skip if no status channel configured
+    return 0
+  fi
+  _require_main_config
+  local token
+  token="$(_read_bot_token)"
+
+  if [[ -z "$topic" ]]; then
+    topic="$(cmd_motd)"
+  fi
+
+  local payload
+  payload="$(python3 -c "import json,sys; print(json.dumps({'topic': sys.argv[1]}))" "$topic")"
+
+  local http_code
+  http_code=$(curl -sS -o /dev/null -w '%{http_code}' \
+    -X PATCH \
+    -H "Authorization: Bot $token" \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    "https://discord.com/api/v10/channels/$STATUS_CHANNEL_ID")
+
+  if [[ "$http_code" =~ ^2 ]]; then
+    echo "STATUS  Channel topic updated: $topic"
+  else
+    echo "WARNING  Failed to update channel topic (HTTP $http_code)" >&2
+  fi
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────
 
 case "${1:-help}" in
@@ -466,6 +532,8 @@ case "${1:-help}" in
   kill-all)          cmd_kill_all ;;
   respawn-dead)      cmd_respawn_dead ;;
   status)            cmd_status ;;
+  motd)              cmd_motd ;;
+  set-status)        shift; cmd_set_channel_topic "$*" ;;
   help|--help|-h)
     cat <<'HELP'
 Discord Session Manager — per-channel Claude Code sessions via tmux
@@ -483,6 +551,8 @@ Discord Session Manager — per-channel Claude Code sessions via tmux
   kill-all            Kill all Discord sessions
   respawn-dead        Respawn any DOWN sessions (used by watchdog)
   status              Overview
+  motd                Print status line (active sessions, watchdog state)
+  set-status [text]   Update the status channel topic (auto-generates if no text)
 HELP
     ;;
   *) echo "Unknown: $1 (try --help)"; exit 1 ;;

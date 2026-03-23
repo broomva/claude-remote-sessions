@@ -4,14 +4,16 @@ description: >
   Per-channel Discord sessions for Claude Code — each Discord channel or thread gets its
   own isolated Claude Code session via tmux, with per-channel access control, project-specific
   workdirs, and automatic CLAUDE.md chain loading. Includes a session manager (spawn, kill,
-  discover, create-channel), a watchdog daemon (auto-respawn every 30s, auto-discover new
-  channels/threads every 60s), thread context injection from parent channels, and launchd
-  boot persistence. Use when: (1) setting up per-channel Discord sessions for Claude Code,
-  (2) managing multiple Claude Code sessions across Discord channels, (3) auto-discovering
-  new Discord channels or threads, (4) spawning thread sessions with parent conversation
-  context, (5) keeping Discord agent sessions alive with a watchdog, (6) user says
-  "discord sessions", "per-channel discord", "discord watchdog", "spawn discord session",
-  "discord channel session", "discord thread session".
+  discover, create-channel, set-status), a watchdog daemon (auto-respawn every 30s,
+  auto-discover new channels/threads every 60s, auto-update status channel topic), thread
+  context injection from parent channels, and launchd boot persistence. Use when:
+  (1) setting up per-channel Discord sessions for Claude Code, (2) managing multiple
+  Claude Code sessions across Discord channels, (3) auto-discovering new Discord channels
+  or threads, (4) spawning thread sessions with parent conversation context, (5) keeping
+  Discord agent sessions alive with a watchdog, (6) displaying bot status via channel topic,
+  (7) user says "discord sessions", "per-channel discord", "discord watchdog",
+  "spawn discord session", "discord channel session", "discord thread session",
+  "bot status", "session status".
 ---
 
 # Discord Sessions
@@ -43,6 +45,7 @@ DISCORD_GUILD_ID="your-guild-server-id"
 DISCORD_SESSION_WORKDIR="$HOME"          # Default workdir for new sessions
 DISCORD_WATCHDOG_INTERVAL=30             # Respawn check frequency (seconds)
 DISCORD_DISCOVER_INTERVAL=60             # Channel/thread discovery frequency (seconds)
+DISCORD_STATUS_CHANNEL_ID=""             # Channel whose topic shows session count (optional)
 ```
 
 Find your user ID: Discord Settings → Advanced → Enable Developer Mode → right-click your name → Copy User ID.
@@ -118,6 +121,40 @@ Creates the Discord channel via API AND spawns its session.
 ./scripts/discord-session-manager.sh attach <id>     # attach to tmux session
 ./scripts/discord-session-manager.sh kill <id>       # kill and deregister
 ./scripts/discord-session-manager.sh kill-all        # kill everything
+./scripts/discord-session-manager.sh motd            # print status line
+./scripts/discord-session-manager.sh set-status      # update status channel topic
+```
+
+## Status Channel
+
+The bot can publish a live status line to a designated Discord channel's topic. This
+shows how many sessions are active, the total registered, and whether the watchdog is
+running -- visible at a glance from the channel list.
+
+### Setup
+
+1. Create (or pick) a channel in your Discord server for status display (e.g. `#bot-status`).
+2. Copy its channel ID and add it to `config.env`:
+   ```
+   DISCORD_STATUS_CHANNEL_ID="123456789012345678"
+   ```
+3. The bot needs **Manage Channels** permission on that channel.
+
+### How it works
+
+- `motd` prints a one-line status: `3/5 sessions active | watchdog: running | 2026-03-23T14:30:00`
+- `set-status` PATCHes that line into the channel's topic via the Discord REST API.
+- The watchdog calls `set-status` automatically after every discover cycle (default: every 60s).
+- If `DISCORD_STATUS_CHANNEL_ID` is not set, status updates are silently skipped -- no errors.
+
+### Manual update
+
+```bash
+# Auto-generated status line
+./scripts/discord-session-manager.sh set-status
+
+# Custom message
+./scripts/discord-session-manager.sh set-status "maintenance mode — back in 10m"
 ```
 
 ## Watchdog Daemon
@@ -130,7 +167,8 @@ Script: `scripts/discord-watchdog.sh`
 ./scripts/discord-watchdog.sh --status    # check if running
 ```
 
-Every 30s: respawns dead sessions. Every 60s: discovers new channels and threads.
+Every 30s: respawns dead sessions. Every 60s: discovers new channels and threads,
+then updates the status channel topic (if configured).
 
 ### Boot Persistence (macOS)
 
@@ -151,8 +189,9 @@ In practice, the watchdog handles this automatically via `discover-threads`.
 ## Architecture
 
 ```
-Discord #general   →  tmux: dc-<a>  →  Claude Code (workdir A, CLAUDE.md chain A)
-Discord #project-x →  tmux: dc-<b>  →  Claude Code (workdir B, CLAUDE.md chain B)
-Thread: "design"   →  tmux: dc-<c>  →  Claude Code (parent context injected)
-                      dc-watchdog    →  Respawns dead + discovers new every 60s
+Discord #general    →  tmux: dc-<a>  →  Claude Code (workdir A, CLAUDE.md chain A)
+Discord #project-x  →  tmux: dc-<b>  →  Claude Code (workdir B, CLAUDE.md chain B)
+Thread: "design"    →  tmux: dc-<c>  →  Claude Code (parent context injected)
+                       dc-watchdog   →  Respawn + discover every 60s + update status topic
+Discord #bot-status ←  channel topic: "3/5 sessions active | watchdog: running"
 ```

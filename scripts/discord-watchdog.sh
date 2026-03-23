@@ -44,6 +44,16 @@ cmd_run() {
         [[ -n "$line" ]] && _log "$line"
       done
       last_discover=$now
+
+      # Update the status channel topic with current session counts
+      local status_msg
+      status_msg="$("$MANAGER" motd 2>/dev/null)" || true
+      if [[ -n "$status_msg" ]]; then
+        _log "Status: $status_msg"
+        "$MANAGER" set-status "$status_msg" 2>&1 | while read -r line; do
+          [[ -n "$line" ]] && _log "$line"
+        done
+      fi
     fi
 
     sleep "$INTERVAL"
