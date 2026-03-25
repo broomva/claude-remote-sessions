@@ -878,22 +878,12 @@ async function editWatchMessage(
     if (!channel?.isTextBased()) return;
     const ch = channel as any;
 
-    // Edit in place — silent, no notifications
-    await ch.messages.edit(state.messageId, { content });
+    // Delete + resend to keep message at the bottom of the channel
+    try { await ch.messages.delete(state.messageId); } catch {}
+    const msg = await ch.send({ content });
+    state.messageId = msg.id;
   } catch (e: any) {
-    // Message may have been deleted — send a new one
-    if (e.code === 10008) {
-      try {
-        const channel = await _discordClient!.channels.fetch(state.channelId);
-        if (channel?.isTextBased()) {
-          const msg = await (channel as any).send({
-            content,
-            flags: 1 << 12, // SUPPRESS_NOTIFICATIONS
-          });
-          state.messageId = msg.id;
-        }
-      } catch {}
-    }
+    console.error(`[watcher] Replace failed:`, e.message);
   }
 }
 
