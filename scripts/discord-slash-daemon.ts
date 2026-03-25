@@ -871,6 +871,40 @@ async function captureTmuxPane(sessionName: string): Promise<string> {
 
 let _discordClient: Client | null = null;
 
+// Bump watch to bottom: delete + resend (used when new messages push it up)
+async function bumpWatchToBottom(state: WatchState): Promise<void> {
+  if (!_discordClient) return;
+  try {
+    const channel = await _discordClient.channels.fetch(state.channelId);
+    if (!channel?.isTextBased()) return;
+    const ch = channel as any;
+
+    // Read current content before deleting
+    let oldContent = "";
+    let oldFiles: any[] = [];
+    try {
+      const oldMsg = await ch.messages.fetch(state.messageId);
+      oldContent = oldMsg.content || "";
+      if (oldMsg.attachments.size > 0) {
+        // Re-upload the attachment
+        const att = oldMsg.attachments.first();
+        if (att) {
+          const resp = await fetch(att.url);
+          const buf = Buffer.from(await resp.arrayBuffer());
+          oldFiles = [new AttachmentBuilder(buf, { name: att.name || "session.txt" })];
+        }
+      }
+    } catch {}
+
+    try { await ch.messages.delete(state.messageId); } catch {}
+    const msg = await ch.send({
+      content: oldContent || `**${state.sessionName}** — watching...`,
+      files: oldFiles.length ? oldFiles : undefined,
+    });
+    state.messageId = msg.id;
+  } catch {}
+}
+
 async function editWatchMessage(
   state: WatchState,
   content: string,
@@ -882,27 +916,36 @@ async function editWatchMessage(
     if (!channel?.isTextBased()) return;
     const ch = channel as any;
 
-    // Delete old message
-    try { await ch.messages.delete(state.messageId); } catch {}
-
-    // If we have full pane text, attach as scrollable .txt file
+    // Edit in place (no flicker, no notifications)
     if (paneText && paneText.length > 100) {
       const elapsed = Math.round((Date.now() - state.startedAt) / 1000);
       const header = `**${state.sessionName}** — working (${elapsed}s)`;
       const attachment = new AttachmentBuilder(Buffer.from(paneText, "utf8"), {
         name: "session.txt",
       });
-      const msg = await ch.send({
+      await ch.messages.edit(state.messageId, {
         content: header,
         files: [attachment],
       });
-      state.messageId = msg.id;
     } else {
-      const msg = await ch.send({ content });
-      state.messageId = msg.id;
+      await ch.messages.edit(state.messageId, { content });
     }
   } catch (e: any) {
-    console.error(`[watcher] Replace failed:`, e.message);
+    // Message was deleted — recreate it
+    if (e.code === 10008) {
+      try {
+        const channel = await _discordClient!.channels.fetch(state.channelId);
+        if (channel?.isTextBased()) {
+          const sendOpts: any = { content: content || `**${state.sessionName}** — watching...` };
+          if (paneText && paneText.length > 100) {
+            sendOpts.files = [new AttachmentBuilder(Buffer.from(paneText, "utf8"), { name: "session.txt" })];
+          }
+          const msg = await (channel as any).send(sendOpts);
+          state.messageId = msg.id;
+        }
+      } catch {}
+    }
+    console.error(`[watcher] Edit failed:`, e.message);
   }
 }
 
@@ -1433,7 +1476,11 @@ async function main() {
 
   // Create the Gateway client
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
   });
 
   client.on("ready", () => {
@@ -1456,6 +1503,16 @@ async function main() {
     if (interaction.isChatInputCommand()) {
       await handleInteraction(interaction as ChatInputCommandInteraction);
     }
+  });
+
+  // Bump watch message to bottom when a new message appears in a watched channel
+  client.on("messageCreate", async (message) => {
+    if (message.author.bot) return;
+    const watch = activeWatches.get(message.channelId);
+    if (!watch) return;
+    // A user sent a message in a watched channel — bump watch to bottom
+    // Small delay to let the user message render first
+    setTimeout(() => bumpWatchToBottom(watch), 1500);
   });
 
   // Graceful shutdown
