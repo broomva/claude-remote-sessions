@@ -859,7 +859,7 @@ function parseAgentActivity(raw: string): string {
 
 async function captureTmuxPane(sessionName: string): Promise<string> {
   try {
-    const result = await $`tmux capture-pane -t ${sessionName} -p -S -80`.text();
+    const result = await $`tmux capture-pane -t ${sessionName} -p -J -S -80`.text();
     return result;
   } catch {
     return "";
