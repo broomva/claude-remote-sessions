@@ -1668,14 +1668,27 @@ async function main() {
     }
   });
 
-  // Bump watch message to bottom when a new message appears in a watched channel
+  // Auto-start watch + bump to bottom when user sends a message
   client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
-    const watch = activeWatches.get(message.channelId);
-    if (!watch) return;
-    // A user sent a message in a watched channel — bump watch to bottom
-    // Small delay to let the user message render first
-    setTimeout(() => bumpWatchToBottom(watch), 1500);
+    const channelId = message.channelId;
+
+    // If already watching, just bump to bottom
+    const watch = activeWatches.get(channelId);
+    if (watch) {
+      setTimeout(() => bumpWatchToBottom(watch), 1500);
+      return;
+    }
+
+    // Auto-start watch if this channel has a registered session
+    const session = findSessionByChannel(channelId);
+    if (session) {
+      const alive = await isTmuxAlive(session.tmux);
+      if (alive) {
+        // Small delay to let the Claude session start processing
+        setTimeout(() => startAutoWatch(channelId), 3000);
+      }
+    }
   });
 
   // Graceful shutdown
