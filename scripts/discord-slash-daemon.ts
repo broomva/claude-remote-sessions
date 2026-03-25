@@ -17,13 +17,14 @@ import {
   REST,
   Routes,
   EmbedBuilder,
+  AttachmentBuilder,
   InteractionType,
   ApplicationCommandType,
   ApplicationCommandOptionType,
   type ChatInputCommandInteraction,
   type AutocompleteInteraction,
 } from "discord.js";
-import { readFileSync, existsSync, readdirSync, statSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { $ } from "bun";
@@ -859,7 +860,9 @@ function parseAgentActivity(raw: string): string {
 
 async function captureTmuxPane(sessionName: string): Promise<string> {
   try {
-    const result = await $`tmux capture-pane -t ${sessionName} -p -J -S -80`.text();
+    // Resize pane wider so long lines aren't wrapped/truncated in the buffer
+    await $`tmux resize-window -t ${sessionName} -x 220`.nothrow().quiet();
+    const result = await $`tmux capture-pane -t ${sessionName} -p -J -S -120`.text();
     return result;
   } catch {
     return "";
@@ -870,7 +873,8 @@ let _discordClient: Client | null = null;
 
 async function editWatchMessage(
   state: WatchState,
-  content: string
+  content: string,
+  paneText?: string
 ): Promise<void> {
   if (!_discordClient) return;
   try {
@@ -878,10 +882,25 @@ async function editWatchMessage(
     if (!channel?.isTextBased()) return;
     const ch = channel as any;
 
-    // Delete + resend to keep message at the bottom of the channel
+    // Delete old message
     try { await ch.messages.delete(state.messageId); } catch {}
-    const msg = await ch.send({ content });
-    state.messageId = msg.id;
+
+    // If we have full pane text, attach as scrollable .txt file
+    if (paneText && paneText.length > 100) {
+      const elapsed = Math.round((Date.now() - state.startedAt) / 1000);
+      const header = `**${state.sessionName}** — working (${elapsed}s)`;
+      const attachment = new AttachmentBuilder(Buffer.from(paneText, "utf8"), {
+        name: "session.txt",
+      });
+      const msg = await ch.send({
+        content: header,
+        files: [attachment],
+      });
+      state.messageId = msg.id;
+    } else {
+      const msg = await ch.send({ content });
+      state.messageId = msg.id;
+    }
   } catch (e: any) {
     console.error(`[watcher] Replace failed:`, e.message);
   }
@@ -1010,7 +1029,7 @@ async function sendSilent(channelId: string, content: string): Promise<void> {
 async function watchTick(state: WatchState): Promise<void> {
   if (state.mode === "log") return watchTickLog(state);
 
-  // ── Live mode (snapshot) ──
+  // ── Live mode (snapshot as scrollable file) ──
   if (!_discordClient) return;
 
   const raw = await captureTmuxPane(state.tmuxSession);
@@ -1020,29 +1039,36 @@ async function watchTick(state: WatchState): Promise<void> {
     return;
   }
 
-  const parsed = parseAgentActivity(raw);
+  // Check idle by looking at the raw pane
+  const lines = raw.split("\n");
+  const isIdle = lines.some((l) => isIdleLine(l));
 
-  if (parsed === "__idle__") {
+  if (isIdle && raw.trim() === state.lastContent?.trim()) {
     state.idleCount++;
     if (state.idleCount >= IDLE_STOP_COUNT) {
       const elapsed = Math.round((Date.now() - state.startedAt) / 1000);
       await editWatchMessage(
         state,
-        `**${state.sessionName}** — done (${elapsed}s)\n\`\`\`\n${state.lastContent || "✓ Complete"}\n\`\`\``
+        `**${state.sessionName}** — done (${elapsed}s)`
       );
       stopWatch(state.channelId, "idle");
     }
     return;
   }
 
-  if (!parsed || parsed === state.lastContent) return;
+  // Skip if pane hasn't changed
+  if (raw.trim() === state.lastContent?.trim()) return;
 
-  state.lastContent = parsed;
+  state.lastContent = raw;
   state.idleCount = 0;
 
-  const elapsed = Math.round((Date.now() - state.startedAt) / 1000);
-  const content = `**${state.sessionName}** — working (${elapsed}s)\n\`\`\`\n${parsed.slice(0, 1900)}\n\`\`\``;
-  await editWatchMessage(state, content);
+  // Clean up the pane text: strip empty lines from top, keep content
+  const cleanedLines = raw.split("\n");
+  // Remove leading blank lines
+  while (cleanedLines.length && !cleanedLines[0].trim()) cleanedLines.shift();
+  const paneText = cleanedLines.join("\n").trimEnd();
+
+  await editWatchMessage(state, "", paneText);
 }
 
 function stopWatch(channelId: string, reason: string): void {
