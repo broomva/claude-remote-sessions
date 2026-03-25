@@ -1114,6 +1114,24 @@ async function watchTick(state: WatchState): Promise<void> {
   const allLines = raw.split("\n");
   // Strip leading blank lines
   while (allLines.length && !allLines[0].trim()) allLines.shift();
+  // Strip TUI chrome from the bottom (input bar, separator lines, status line)
+  while (allLines.length) {
+    const last = allLines[allLines.length - 1].trim();
+    if (
+      !last ||
+      last.match(/^[─━─═▔▁_]{3,}$/) ||    // separator lines
+      last.match(/^[❯>]\s*$/) ||            // bare prompt
+      last.match(/bypass permissions/) ||    // status bar
+      last.match(/auto-compact/) ||          // compact indicator
+      last.match(/shift\+tab/) ||            // keybinding hints
+      last.match(/esc to interrupt/) ||      // interrupt hint
+      last.match(/hold Space/)               // voice hint
+    ) {
+      allLines.pop();
+    } else {
+      break;
+    }
+  }
 
   const display: string[] = [];
   let bodyLen = 0;
