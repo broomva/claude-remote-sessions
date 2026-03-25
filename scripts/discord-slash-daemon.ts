@@ -361,6 +361,11 @@ const SLASH_COMMANDS = [
           },
         ],
       },
+      {
+        name: "snapshot",
+        description: "Dump full session output as a scrollable text file",
+        type: ApplicationCommandOptionType.Subcommand,
+      },
     ],
   },
   {
@@ -1154,6 +1159,58 @@ function stopWatch(channelId: string, reason: string): void {
   console.log(`[watcher] Stopped watch for ${state.sessionName}: ${reason}`);
 }
 
+async function handleSessionSnapshot(
+  interaction: ChatInputCommandInteraction
+): Promise<string> {
+  const channelId = interaction.channelId;
+  const session = findSessionByChannel(channelId);
+  if (!session) {
+    return "No session registered for this channel. Try `/discover` first.";
+  }
+
+  const alive = await isTmuxAlive(session.tmux);
+  if (!alive) {
+    return `Session \`${session.tmux}\` is not running.`;
+  }
+
+  // Capture a large chunk of the pane
+  let paneText = "";
+  try {
+    await $`tmux resize-window -t ${session.tmux} -x 220`.nothrow().quiet();
+    paneText = await $`tmux capture-pane -t ${session.tmux} -p -J -S -500`.text();
+  } catch {
+    return "Failed to capture session pane.";
+  }
+
+  // Strip TUI chrome from bottom
+  const lines = paneText.split("\n");
+  while (lines.length) {
+    const last = lines[lines.length - 1].trim();
+    if (
+      !last ||
+      last.match(/^[─━═▔▁_]{3,}$/) ||
+      last.match(/^[❯>]\s*$/) ||
+      last.match(/bypass permissions/) ||
+      last.match(/auto-compact/) ||
+      last.match(/shift\+tab/) ||
+      last.match(/esc to interrupt/) ||
+      last.match(/hold Space/)
+    ) {
+      lines.pop();
+    } else {
+      break;
+    }
+  }
+  // Strip leading blank lines
+  while (lines.length && !lines[0].trim()) lines.shift();
+
+  const cleaned = lines.join("\n").trimEnd();
+  if (!cleaned) return "Session pane is empty.";
+
+  // Return a marker so the router uploads the file
+  return JSON.stringify({ __snapshot: true, name: session.name, content: cleaned });
+}
+
 async function handleSessionWatch(
   interaction: ChatInputCommandInteraction
 ): Promise<string> {
@@ -1389,6 +1446,9 @@ async function handleInteraction(
           case "watch":
             response = await handleSessionWatch(interaction);
             break;
+          case "snapshot":
+            response = await handleSessionSnapshot(interaction);
+            break;
           default:
             response = `Unknown subcommand: ${sub}`;
         }
@@ -1455,6 +1515,18 @@ async function handleInteraction(
       };
       activeWatches.set(channelId, state);
       console.log(`[watcher] Started watch (${modeLabel}) for ${parsed.name} in ${channelId}`);
+    }
+    // Check for snapshot signal — upload full pane as .txt file
+    else if (response.startsWith("{") && response.includes('"__snapshot"')) {
+      const parsed = JSON.parse(response);
+      const attachment = new AttachmentBuilder(
+        Buffer.from(parsed.content, "utf8"),
+        { name: `${parsed.name}-snapshot.txt` }
+      );
+      await interaction.editReply({
+        content: `**${parsed.name}** — full session snapshot`,
+        files: [attachment],
+      });
     }
     // Check if response contains an embed
     else if (response.startsWith("{") && response.includes('"embed"')) {

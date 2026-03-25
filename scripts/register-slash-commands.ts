@@ -101,15 +101,20 @@ const SLASH_COMMANDS = [
         options: [
           {
             name: "mode",
-            description: "Display mode (default: log)",
+            description: "Display mode (default: live)",
             type: ApplicationCommandOptionType.String,
             required: false,
             choices: [
-              { name: "log — timestamped history of all activity", value: "log" },
               { name: "live — updating snapshot of current state", value: "live" },
+              { name: "log — timestamped history of all activity", value: "log" },
             ],
           },
         ],
+      },
+      {
+        name: "snapshot",
+        description: "Dump full session output as a scrollable text file",
+        type: ApplicationCommandOptionType.Subcommand,
       },
     ],
   },
