@@ -1235,13 +1235,18 @@ async function watchTick(state: WatchState): Promise<void> {
     const last = allLines[allLines.length - 1].trim();
     if (
       !last ||
-      last.match(/^[─━─═▔▁_]{3,}$/) ||    // separator lines
-      last.match(/^[❯>]\s*$/) ||            // bare prompt
-      last.match(/bypass permissions/) ||    // status bar
-      last.match(/auto-compact/) ||          // compact indicator
-      last.match(/shift\+tab/) ||            // keybinding hints
-      last.match(/esc to interrupt/) ||      // interrupt hint
-      last.match(/hold Space/)               // voice hint
+      last.match(/^[─━═▔▁_\-─]{3,}$/) ||    // separator lines (pure)
+      last.match(/^[─━═▔▁_\-─\s]+$/) ||      // separator lines with spaces
+      last.match(/^[❯>]\s*$/) ||              // bare prompt
+      last.match(/bypass permissions/) ||      // status bar
+      last.match(/auto-compact/) ||            // compact indicator
+      last.match(/shift\+tab/) ||              // keybinding hints
+      last.match(/esc to interrupt/) ||        // interrupt hint
+      last.match(/hold Space/) ||              // voice hint
+      last.match(/^⏵⏵/) ||                    // permission mode indicator
+      last.match(/Sonnet|Opus|Haiku/) && last.match(/tok:|rate:|cache:|200K|100K/) ||  // status bar with model + stats
+      last.match(/\d+K \[#/) ||               // context gauge [##--------]
+      last.match(/●.*\/effort/)               // effort indicator
     ) {
       allLines.pop();
     } else {
