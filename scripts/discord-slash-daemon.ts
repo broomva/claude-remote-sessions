@@ -1226,31 +1226,26 @@ async function watchTick(state: WatchState): Promise<void> {
   const header = `**${state.sessionName}** — working (${elapsed}s)\n`;
   const maxBody = 2000 - header.length - 10; // 10 for ``` markers + newlines
 
-  // Take lines from the bottom (most recent), fitting within limit
-  const allLines = raw.split("\n");
-  // Strip leading blank lines
+  // Filter TUI chrome from ALL lines (separators, prompt, keybinding hints)
+  // Keep status bar (model, tokens, cost, rate) — it's useful info
+  const isTuiChrome = (line: string): boolean => {
+    const t = line.trim();
+    if (!t) return false; // blank lines kept for readability
+    if (t.match(/^[─━═▔▁_\-─]{3,}$/)) return true;     // separator (pure)
+    if (t.match(/^[─━═▔▁_\-─\s]+$/) && t.length > 3) return true; // separator with spaces
+    if (t.match(/^[❯>]\s*$/)) return true;               // bare prompt
+    if (t.match(/^❯\s*$/)) return true;                  // bare prompt (unicode)
+    if (t.match(/bypass permissions/)) return true;
+    if (t.match(/shift\+tab/)) return true;
+    if (t.match(/^⏵⏵/)) return true;
+    return false;
+  };
+
+  const allLines = raw.split("\n").filter((line) => !isTuiChrome(line));
+
+  // Strip leading/trailing blank lines
   while (allLines.length && !allLines[0].trim()) allLines.shift();
-  // Strip TUI chrome from the bottom (separator lines, bare prompt, keybinding hints)
-  // Keep the status bar (model, tokens, cost, rate) — it's useful info
-  while (allLines.length) {
-    const last = allLines[allLines.length - 1].trim();
-    if (
-      !last ||
-      last.match(/^[─━═▔▁_\-─]{3,}$/) ||    // separator lines (pure)
-      last.match(/^[─━═▔▁_\-─\s]+$/) ||      // separator lines with spaces
-      last.match(/^[❯>]\s*$/) ||              // bare prompt
-      last.match(/bypass permissions/) ||      // permission mode text
-      last.match(/auto-compact/) ||            // compact indicator
-      last.match(/shift\+tab/) ||              // keybinding hints
-      last.match(/esc to interrupt/) ||        // interrupt hint
-      last.match(/hold Space/) ||              // voice hint
-      last.match(/^⏵⏵/)                       // permission mode indicator
-    ) {
-      allLines.pop();
-    } else {
-      break;
-    }
-  }
+  while (allLines.length && !allLines[allLines.length - 1].trim()) allLines.pop();
 
   const display: string[] = [];
   let bodyLen = 0;
