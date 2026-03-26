@@ -1281,8 +1281,8 @@ async function handleSessionHistory(
 
 // Map friendly names to tmux key sequences
 const KEY_MAP: Record<string, string> = {
-  yes: "y",
-  no: "n",
+  yes: "Enter",
+  no: "Escape",
   esc: "Escape",
   escape: "Escape",
   enter: "Enter",
@@ -1322,10 +1322,24 @@ async function handleSessionSend(
       // Send as a tmux key
       await $`tmux send-keys -t ${session.tmux} ${mappedKey}`.quiet();
       return `Sent key \`${lower}\` → \`${mappedKey}\` to session \`${session.name}\``;
-    } else if (lower === "1" || lower === "2" || lower === "3") {
-      // Numeric choice — send the number + Enter
-      await $`tmux send-keys -t ${session.tmux} ${lower} Enter`.quiet();
-      return `Sent choice \`${lower}\` to session \`${session.name}\``;
+    } else if (lower === "1") {
+      // Option 1 — cursor starts here, just press Enter
+      await $`tmux send-keys -t ${session.tmux} Enter`.quiet();
+      return `Selected option 1 (Enter) in session \`${session.name}\``;
+    } else if (lower === "2") {
+      // Option 2 — Down then Enter
+      await $`tmux send-keys -t ${session.tmux} Down Enter`.quiet();
+      return `Selected option 2 (Down+Enter) in session \`${session.name}\``;
+    } else if (lower === "3") {
+      // Option 3 — Down Down Enter
+      await $`tmux send-keys -t ${session.tmux} Down Down Enter`.quiet();
+      return `Selected option 3 (Down+Down+Enter) in session \`${session.name}\``;
+    } else if (lower === "4") {
+      await $`tmux send-keys -t ${session.tmux} Down Down Down Enter`.quiet();
+      return `Selected option 4 in session \`${session.name}\``;
+    } else if (lower === "5") {
+      await $`tmux send-keys -t ${session.tmux} Down Down Down Down Enter`.quiet();
+      return `Selected option 5 in session \`${session.name}\``;
     } else {
       // Send as text + Enter
       const escaped = escapeForTmux(rawInput);
@@ -1530,11 +1544,11 @@ async function handleAutocomplete(
   ) {
     const typed = (focused.value as string).toLowerCase().trim();
     const commonChoices = [
-      { name: "1 — Select option 1 (Yes)", value: "1" },
-      { name: "2 — Select option 2 (Yes, allow all)", value: "2" },
-      { name: "3 — Select option 3 (No)", value: "3" },
-      { name: "yes — Confirm / approve", value: "yes" },
-      { name: "no — Reject / deny", value: "no" },
+      { name: "1 — Select option 1 (Enter — cursor starts here)", value: "1" },
+      { name: "2 — Select option 2 (Down + Enter)", value: "2" },
+      { name: "3 — Select option 3 (Down×2 + Enter)", value: "3" },
+      { name: "yes — Press Enter (confirm current selection)", value: "yes" },
+      { name: "no — Press Escape (cancel)", value: "no" },
       { name: "enter — Press Enter", value: "enter" },
       { name: "esc — Cancel / dismiss", value: "esc" },
       { name: "tab — Next option", value: "tab" },
