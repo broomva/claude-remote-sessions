@@ -204,7 +204,7 @@ _spawn_tmux() {
   # Persist the session ID so respawns can resume the conversation
   _persist_session_id "$id" "$session_uuid"
 
-  # Unset API keys, set OAuth token for --channels auth
+  # Unset API keys, set OAuth token for plugin auth
   local oauth_token="${CLAUDE_CODE_OAUTH_TOKEN:-}"
   claude_cmd="unset ANTHROPIC_API_KEY CLAUDE_API_KEY;"
   [[ -n "$oauth_token" ]] && claude_cmd+=" CLAUDE_CODE_OAUTH_TOKEN='$oauth_token'"

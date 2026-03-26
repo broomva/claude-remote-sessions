@@ -298,6 +298,56 @@ The daemon requires:
 - Guild ID in `~/.claude/discord-sessions/config.env`
 - The bot must have the `applications.commands` scope in the guild
 
+## Troubleshooting
+
+### Sessions crash immediately after account switch
+
+**Symptom:** After logging into a new Claude account (`claude login`), sessions spawn
+but immediately die. Only the first session survives; all subsequent ones exit silently.
+
+**Cause:** Stale `.session-id` files from the previous account. Claude Code's
+`--session-id` flag tries to resume a conversation that doesn't exist under the new
+account, causing the process to exit.
+
+**Fix:**
+
+```bash
+# 1. Kill all sessions
+./scripts/discord-session-manager.sh kill-all
+
+# 2. Clear stale session IDs
+for d in ~/.claude/discord-sessions/*/; do rm -f "$d/.session-id"; done
+
+# 3. Clear session state
+echo '{}' > ~/.claude/discord-sessions/sessions.json
+
+# 4. Update OAuth token in config.env (if using CLAUDE_CODE_OAUTH_TOKEN)
+# Edit ~/.claude/discord-sessions/config.env with your new token
+
+# 5. Respawn all sessions
+./scripts/discord-session-manager.sh discover-all
+```
+
+### Sessions start but Discord messages don't arrive
+
+**Symptom:** Sessions show the Claude Code TUI prompt but no
+"Listening for channel messages from: plugin:discord" banner.
+
+**Cause:** The `--channels plugin:discord@claude-plugins-official` flag is missing
+from the spawn command. The Discord plugin MCP server only connects when launched
+with `--channels`.
+
+**Fix:** Ensure the session manager includes `--channels` in the claude command.
+The flag is required even though the plugin is installed globally.
+
+### "You're out of extra usage" rate limit
+
+**Symptom:** Session shows a rate-limit prompt with options to wait, switch to
+extra usage, or upgrade.
+
+**Fix:** Use `/session send 2` from Discord to select "Switch to extra usage",
+or `/session send 1` to wait for reset.
+
 ## Architecture
 
 ```
