@@ -659,7 +659,7 @@ function listAvailableProfiles(): string[] {
     const content = readFileSync(profilesFile, "utf8");
     const profiles: string[] = ["default"];
     for (const line of content.split("\n")) {
-      const m = line.match(/^\[(.+)\]$/);
+      const m = line.trim().match(/^\[(.+)\]$/);
       if (m && m[1] !== "default") profiles.push(m[1]);
     }
     return profiles;
